@@ -1,0 +1,1 @@
+# ai-for-purpose-hackathon-2026
