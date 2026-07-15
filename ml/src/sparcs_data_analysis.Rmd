@@ -1,0 +1,853 @@
+---
+title: "SPARCS Data Exploration"
+author: "Rose Calixte, PhD, PSTAT"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    toc: yes
+---
+
+### Load the required Library
+
+```{r}
+library(readr)
+require(dplyr)
+require(stringr)
+require(ggplot2)
+require(rpart)
+require(chattr)
+library(janitor)
+library(gtsummary)
+require(tidymodels)
+require(nnet)
+require(glmnet)
+require(randomForest)
+require(caret)
+require(xgboost)
+require(ranger)
+require(scales)
+require(quantreg)
+library(purrr)
+library(yardstick)
+library(vetiver)
+library(pins)
+library(jsonlite)
+```
+
+### Loading the data
+```{r}
+
+sparcs_2024 <- read_csv("../data/2024/Hospital_Inpatient_Discharges__SPARCS_De-Identified___2024.csv")
+
+sparcs_2023 <- read_csv("../data/2023/Hospital_Inpatient_Discharges__SPARCS_De-Identified___2023.csv")
+
+sparcs_2022 <- read_csv("../data/2022/Hospital_Inpatient_Discharges__SPARCS_De-Identified___2022.csv")
+
+sparcs_2021 <- read_csv("../data/2021/Hospital_Inpatient_Discharges__SPARCS_De-Identified___2021.csv")
+
+attach(sparcs_2021)
+attach(sparcs_2022)
+attach(sparcs_2023)
+attach(sparcs_2024)
+```
+
+### Clean, rename, a nd merge the master files
+
+```{r}
+# ==============================================================================
+# MASTER PIPELINE: INDIVIDUAL CLEANING (2021-2024) -> MERGE
+# ==============================================================================
+
+# --- 2021 Data Cleaning ---
+clean_2021 <- clean_names(sparcs_2021) %>%
+  mutate(
+    # 1. Clean and convert birth_weight
+    birth_weight = as.numeric(str_trim(as.character(birth_weight))),
+    
+    # 2. Clean and convert length_of_stay
+    los_clean    = str_trim(str_remove(as.character(length_of_stay), "\\+")),
+    length_of_stay = as.numeric(los_clean),
+    
+    # 3. Clean and convert total_charges (strips out commas, dollar signs, and spaces)
+    charges_clean = str_remove_all(as.character(total_charges), "[\\$, ]"),
+    total_charges = as.numeric(charges_clean),
+    
+    # 4. Clean and convert total_costs (strips out commas, dollar signs, and spaces)
+    costs_clean   = str_remove_all(as.character(total_costs), "[\\$, ]"),
+    total_costs   = as.numeric(costs_clean)
+  ) %>%
+  # Drop all the temporary intermediate calculation columns
+  select(-los_clean, -charges_clean, -costs_clean)
+
+# --- 2022 Data Cleaning ---
+clean_2022 <- clean_names(sparcs_2022) %>%
+  mutate(
+    birth_weight = as.numeric(str_trim(as.character(birth_weight)))
+  ) 
+
+# --- 2023 Data Cleaning ---
+clean_2023 <- clean_names(sparcs_2023) %>%
+  mutate(
+    birth_weight = as.numeric(str_trim(as.character(birth_weight)))
+  ) 
+
+# --- 2024 Data Cleaning (Just Length of Stay + Name Fixes) ---
+clean_2024 <- clean_names(sparcs_2024) %>%
+  # 1. Fix the 2024 column name shifts first
+  rename(
+    hospital_service_area = health_service_area,
+    zip_code_3_digits     = zip_code
+  ) %>%
+  # 2. Process JUST length_of_stay for 2024
+  mutate(
+    los_clean    = str_trim(str_remove(as.character(length_of_stay), "\\+")),
+    length_of_stay = as.numeric(los_clean)
+  ) %>%
+  select(-los_clean)
+
+# ==============================================================================
+# FINAL MASTER MERGE
+# ==============================================================================
+
+# Stacks all four years seamlessly since columns and data types now line up perfectly
+sparcs_master <- bind_rows(clean_2021, clean_2022, clean_2023, clean_2024)
+
+# ==============================================================================
+# DATA TYPE VERIFICATION CHECKS
+# ==============================================================================
+print("Final Column Classes in Master Dataset:")
+print(paste("Length of Stay:", class(sparcs_master$length_of_stay)))
+print(paste("Birth Weight:", class(sparcs_master$birth_weight)))
+print(paste("Total Charges:", class(sparcs_master$total_charges)))
+print(paste("Total Costs:", class(sparcs_master$total_costs)))
+
+table(sparcs_master$payment_typology_1)
+```
+
+### Filter to NYC Area, Vaginal Delivery, Private Insurance or BCBS
+
+```{r}
+# ==============================================================================
+# COHORT SELECTION: NYC, PRIVATE/BCBS INSURANCE, VAGINAL DELIVERY
+# ==============================================================================
+
+sparcs_filtered <- sparcs_master %>%
+  filter(
+    # 1. Restrict geographically to New York City
+    hospital_service_area == "New York City",
+    
+    # 2. Restrict to Primary Insurance that is either BCBS or Private Health Insurance
+    payment_typology_1 %in% c("Blue Cross/Blue Shield", "Private Health Insurance"),
+    
+    # 3. Isolate vaginal deliveries using the APR-DRG description
+    # (Using grepl for a case-insensitive search handles any minor label shifts)
+    grepl("Vaginal Delivery", apr_drg_description, ignore.case = TRUE)
+  )
+
+sparcs_filtered <- sparcs_filtered %>%
+  filter(
+    # Converts the column to uppercase and looks for an exact or clean match
+    toupper(apr_drg_description) == "VAGINAL DELIVERY"
+  )
+# ==============================================================================
+# CLEAN AND UNIFY AGE GROUPS
+# ==============================================================================
+
+sparcs_filtered <- sparcs_filtered %>%
+  mutate(
+    # 1. Convert " to " into "-" and strip out extra spaces
+    age_group = str_replace_all(age_group, " to ", "-"),
+    age_group = str_trim(age_group)
+  ) %>%
+  # 2. Filter out the clinical anomalies (ages 50-69) for a live birth cohort
+  filter(age_group != "50-69")
+sparcs_filtered <- sparcs_filtered %>%
+  filter(
+    # Keep only the adult age brackets
+    age_group != "0-17"
+  )
+
+sparcs_filtered <- sparcs_filtered %>%
+  filter(
+    # Keep only the rows matching your three target categories
+    type_of_admission %in% c("Elective", "Emergency", "Urgent")
+  )
+
+sparcs_filtered <- sparcs_filtered %>%
+  filter(
+    # Kepp only those with minor risk of mortality
+    toupper(apr_risk_of_mortality) =="MINOR"
+  )
+sparcs_filtered <- sparcs_filtered %>%
+  filter(
+    # Filter out those with extreme severity of illness
+    toupper(apr_severity_of_illness_description) !="EXTREME"
+  )
+# ==============================================================================
+# VERIFICATION CHECK
+# ==============================================================================
+
+print("Remaining types of admission:")
+print(table(sparcs_filtered$type_of_admission))
+
+print("Cleaned and unified age groups:")
+print(table(sparcs_filtered$age_group))
+
+print("Breakdown of Primary Payer in final cohort:")
+table(sparcs_filtered$payment_typology_1)
+
+print("Unique Delivery Types remaining:")
+table(sparcs_filtered$apr_drg_description)
+```
+
+### Creating the Ratio indicator variable
+
+```{r}
+# ==============================================================================
+# ADD FINANCIAL METRICS: COST-TO-CHARGE PERCENTAGE & 50% INDICATOR
+# ==============================================================================
+
+sparcs_filtered <- sparcs_filtered %>%
+  mutate(
+    # 1. Calculate the cost as a percentage of the total charge
+    cost_to_charge_pct = (total_costs / total_charges) * 100,
+    
+    # 2. Create an indicator variable (1 = 50% or more, 0 = Less than 50%)
+    cost_gte_50_pct = if_else(cost_to_charge_pct >= 50, 1, 0),
+    
+    # 3. Create a Cost to charge differential
+    cost_to_charge_diff = total_costs-total_charges
+  )
+
+# ==============================================================================
+# VERIFICATION CHECKS
+# ==============================================================================
+
+print("Summary statistics for the new percentage variable:")
+print(summary(sparcs_filtered$cost_to_charge_pct))
+
+print("Breakdown of the 50% or more indicator flag:")
+print(table(sparcs_filtered$cost_gte_50_pct, useNA = "ifany"))
+```
+
+### Categorize the hospitals into private, public, and community
+
+```{r}
+
+# ==============================================================================
+# CREATE THREE-TIER HOSPITAL TYPE VARIABLE
+# ==============================================================================
+
+sparcs_filtered <- sparcs_filtered %>%
+  mutate(
+    # Create an uppercase placeholder for matching to eliminate duplicate case rows
+    fac_upper = toupper(facility_name),
+    
+    # Define our three tiers based on operational structure
+    hospital_tier = case_when(
+      
+      # 1. PUBLIC HOSPITALS (NYC H+H & State SUNY)
+      grepl("BELLEVUE|CONEY ISLAND|SOUTH BROOKLYN HEALTH|ELMHURST|HARLEM|JACOBI|KINGS COUNTY|LINCOLN|METROPOLITAN|NORTH CENTRAL BRONX|QUEENS HOSPITAL|WOODHULL|UNIVERSITY HOSPITAL OF BROOKLYN", fac_upper) 
+      ~ "Public",
+      
+      # 2. PRIVATE SYSTEMS & ACADEMIC MEDICAL CENTERS
+      grepl("PRESBYTERIAN|NYU LANGONE|MOUNT SINAI|LENOX HILL|LONG ISLAND JEWISH|STATEN ISLAND UNIVERSITY|MONTEFIORE|MAIMONIDES", fac_upper) 
+      ~ "Private System",
+      
+      # 3. COMMUNITY / SAFETY-NET VOLUNTARY HOSPITALS (Everything else remaining)
+      TRUE ~ "Community"
+    ),
+    
+    # Convert to factor for your downstream logistic/GLM modeling
+    hospital_tier = factor(hospital_tier, levels = c("Public", "Community", "Private System"))
+  ) %>%
+  # Drop our temporary uppercase matching column
+  select(-fac_upper)
+
+# ==============================================================================
+# VERIFICATION CHECK
+# ==============================================================================
+print("Count of records in each hospital tier:")
+print(table(sparcs_filtered$hospital_tier))
+
+sparcs_filtered <- sparcs_filtered %>%
+  mutate(
+    # If the county is "Manhattan", overwrite it with "New York"
+    hospital_county = if_else(hospital_county == "Manhattan", "New York", hospital_county)
+  )
+
+# ==============================================================================
+# VERIFICATION CHECK
+# ==============================================================================
+
+print("Cleaned and collapsed NYC hospital counties:")
+print(table(sparcs_filtered$hospital_county))
+
+write_csv(sparcs_filtered, "sparcs_filtered.csv")
+```
+
+### Summarize the data
+
+```{r}
+sparcs_filtered %>%
+  select(discharge_year, age_group, race, ethnicity, type_of_admission, patient_disposition, hospital_county, hospital_tier,
+         apr_severity_of_illness_code, apr_severity_of_illness_description,
+         apr_risk_of_mortality, apr_medical_surgical_description,
+         payment_typology_1, apr_drg_description, length_of_stay, 
+         total_charges, total_costs, cost_to_charge_diff, cost_to_charge_pct, cost_gte_50_pct) %>%
+  tbl_summary(
+    missing = "ifany", # Displays row for missing values only if they exist
+    statistic = list(
+      all_continuous() ~ "{mean} ({sd})",      # Mean and standard deviation for numeric
+      all_categorical() ~ "{n} ({p}%)"         # Counts and percentages for categories
+    )
+  ) %>%
+  bold_labels() 
+```
+
+### Compare the characteristics across year
+
+```{r}
+sparcs_filtered %>%
+  select(
+    discharge_year, # <-- Added the grouping variable here
+    age_group, race, ethnicity, type_of_admission, hospital_county, hospital_tier,
+    apr_severity_of_illness_code, apr_severity_of_illness_description,payment_typology_1, length_of_stay, 
+    total_charges, total_costs, cost_to_charge_diff, cost_to_charge_pct, cost_gte_50_pct
+  ) %>%
+  tbl_summary(
+    by = discharge_year, # <-- Groups data into side-by-side columns by year
+    missing = "ifany", 
+    statistic = list(
+      all_continuous() ~ "{mean} ({sd})",  
+      all_categorical() ~ "{n} ({p}%)"     
+    )
+  ) %>%
+  bold_labels() %>%
+  add_p() # Optional: Adds statistical tests across years (e.g., ANOVA, Chi-Square)
+```
+
+### Visualizing the Quantitative Variables as Histograms
+
+```{r}
+# --- Histogram 1: Total Charges ---
+ggplot(sparcs_filtered, aes(x = total_charges)) +
+  geom_histogram(fill = "steelblue", color = "white", bins = 50) +
+  scale_x_continuous(labels = label_dollar()) + # Formats numbers as $50,000 etc.
+  labs(
+    title = "Distribution of Total Charges for Vaginal Deliveries",
+    subtitle = "Privately Insured Cohort in NYC",
+    x = "Total Charges ($)",
+    y = "Count of Patients"
+  ) +
+  theme_minimal(base_size = 14)
+
+# --- Histogram 2: Total Costs ---
+ggplot(sparcs_filtered, aes(x = total_costs)) +
+  geom_histogram(fill = "darkgreen", color = "white", bins = 50) +
+  scale_x_continuous(labels = label_dollar()) +
+  labs(
+    title = "Distribution of Total Costs for Vaginal Deliveries",
+    subtitle = "Privately Insured Cohort in NYC",
+    x = "Total Costs ($)",
+    y = "Count of Patients"
+  ) +
+  theme_minimal(base_size = 14)
+
+# --- Histogram 3: Length of Stay ---
+ggplot(sparcs_filtered, aes(x = length_of_stay)) +
+  geom_histogram(fill = "darkorange", color = "white", binwidth = 1) + # 1-day bins
+  scale_x_continuous(breaks = seq(0, 10, by = 2)) + # Shows ticks for each day
+  labs(
+    title = "Distribution of Length of Stay for Vaginal Deliveries",
+    subtitle = "Privately Insured Cohort in NYC",
+    x = "Length of Stay (Days)",
+    y = "Count of Patients"
+  ) +
+  theme_minimal(base_size = 14)
+
+# ==============================================================================
+# HISTOGRAM FOR COST-TO-CHARGE DIFFERENCE
+# ==============================================================================
+
+ggplot(sparcs_filtered, aes(x = cost_to_charge_diff)) +
+  # Create the histogram bars
+  geom_histogram(fill = "purple", color = "white", bins = 50) +
+  
+  # Add a distinct vertical line at $0 to mark where cost equals charge
+  geom_vline(xintercept = 0, linetype = "dashed", color = "darkred", size = 1) +
+  
+  # Format the x-axis numbers as clean currency (e.g., -$10,000)
+  scale_x_continuous(labels = label_dollar()) +
+  
+  # Titles and metadata
+  labs(
+    title = "Distribution of Net Financial Difference (Cost - Charge)",
+    subtitle = "Vaginal Deliveries in NYC | Dashed line indicates Cost = Charge",
+    x = "Financial Difference (Total Costs - Total Charges)",
+    y = "Count of Patients"
+  ) +
+  
+  # Polished styling
+  theme_minimal(base_size = 14)
+```
+
+### Preparing the data for analysis
+
+```{r}
+# 1. Format data for classification
+modeling_data <- sparcs_filtered %>%
+  mutate(
+    # Caret requires factors for classification, and valid R variable names for labels
+    cost_gte_50_pct = factor(if_else(cost_gte_50_pct == 1, "GTE_50", "LESST_50"))
+  ) %>%
+  # Select only the target and the specific predictor/control variables you want
+  select(discharge_year, age_group,race,ethnicity,length_of_stay,apr_severity_of_illness_description,payment_typology_1,type_of_admission,hospital_county, hospital_tier, total_charges,total_costs, cost_to_charge_pct, cost_gte_50_pct, cost_to_charge_diff)
+```
+
+### Partition the Data
+
+```{r}
+set.seed(4568)
+
+split <- modeling_data$cost_gte_50_pct %>% 
+  createDataPartition(p = 0.7, list = FALSE)
+
+train_data <- modeling_data[split, ]
+test_data <- modeling_data[-split, ]
+```
+
+### create a test training a model (logistic regression)
+
+```{r}
+# Configure cross-validation and request probability outputs
+cv_control <- trainControl(
+  method = "cv",
+  number = 10,
+  classProbs = TRUE,                  # Necessary to calculate ROC curve downstream
+  summaryFunction = twoClassSummary  # Evaluates using ROC/AUC instead of raw Accuracy
+)
+
+# Fit the logistic regression model
+logistic_model <- train(
+  cost_gte_50_pct ~ discharge_year+age_group+race+ethnicity+length_of_stay+apr_severity_of_illness_description+
+    payment_typology_1+type_of_admission+hospital_county+ hospital_tier, 
+  data = train_data, 
+  method = "glm",
+  family = "binomial",                # Tells GLM to run logistic link function
+  trControl = cv_control,
+  metric = "ROC"                      # Optimizes the model based on Area Under the ROC Curve
+)
+
+# View model overview and CV results
+print(logistic_model)
+```
+
+### Testing the model
+
+```{r}
+# 1. Predict class labels on test data
+test_predictions <- predict(logistic_model, newdata = test_data)
+
+# 2. Generate Confusion Matrix (Shows Accuracy, Sensitivity, Specificity)
+confusionMatrix(test_predictions, test_data$cost_gte_50_pct)
+
+summary(logistic_model$finalModel)
+
+```
+
+### Creating an Ensemble of models for quantitative variables
+
+```{r}
+# Define Candidate Models
+
+# 1. Linear Regression
+lm_spec <- linear_reg() %>%
+  set_engine("lm")
+
+# 3. Ridge Regression
+ridge_spec <- linear_reg(mixture = 0, penalty = 0.1) %>%
+  set_engine("glmnet")
+
+# 4. Regression Tree
+tree_spec <- decision_tree() %>%
+  set_engine("rpart") %>%
+  set_mode("regression")
+
+# 5. Random Forest
+rf_spec <- rand_forest(trees = 100) %>%
+  set_engine("ranger") %>%
+  set_mode("regression")
+
+# 6. XGBoost (Fixed Typos)
+xgb_spec <- boost_tree(trees = 100) %>%  # Fixed function name and argument plural 'trees'
+  set_engine("xgboost") %>%              # Fixed engine name
+  set_mode("regression")
+
+models = list(
+  "Linear Regression" = lm_spec,
+  "Ridge Regression" = ridge_spec,
+  "Regression Tree" = tree_spec,
+  "Random Forest" = rf_spec,
+  "XGBoost" = xgb_spec
+)
+```
+
+### Helper: Save champion models as JSON
+
+```{r}
+# ==============================================================================
+# HELPER: SAVE CHAMPION MODEL AS JSON (alongside the vetiver pin)
+# ==============================================================================
+# Writes two files per champion into ml/models:
+#   <model_name>.json          - full model serialized with jsonlite::serializeJSON(),
+#                                 reload with jsonlite::unserializeJSON()
+#   <model_name>_metadata.json - human-readable champion name, formula, and metrics
+
+json_models_dir <- "../models"
+if (!dir.exists(json_models_dir)) dir.create(json_models_dir, recursive = TRUE)
+
+save_champion_json <- function(model_name, fitted_workflow, formula, results_table) {
+  write(
+    jsonlite::serializeJSON(fitted_workflow),
+    file.path(json_models_dir, paste0(model_name, ".json"))
+  )
+
+  metadata <- list(
+    model_name = model_name,
+    champion   = as.character(results_table$Model[1]),
+    formula    = deparse(formula),
+    metrics    = results_table,
+    saved_at   = as.character(Sys.time())
+  )
+  write_json(
+    metadata,
+    file.path(json_models_dir, paste0(model_name, "_metadata.json")),
+    auto_unbox = TRUE,
+    pretty = TRUE
+  )
+}
+```
+
+### Train, test, and rank the Models for Total Charges
+
+```{r}
+# Create an empty list container to keep track of the physical model objects
+fitted_charges_models <- list()
+
+results_charges = map_dfr(names(models), function(name) {
+  fitted_model = models[[name]] %>%
+    fit(total_charges ~ discharge_year+ age_group + race + ethnicity + length_of_stay + apr_severity_of_illness_description +
+        payment_typology_1 + type_of_admission + hospital_county + hospital_tier, data = train_data)
+  
+  # Save the trained model object to our external list before moving to the next iteration
+  fitted_charges_models[[name]] <<- fitted_model
+  
+  preds = predict(fitted_model, new_data = test_data) %>%
+    bind_cols(test_data)
+  
+  rmse_val = mse(preds, truth = total_charges, estimate = .pred) %>% pull(.estimate)
+  rsq_value = rsq(preds, truth = total_charges, estimate = .pred) %>% pull(.estimate)
+  
+  tibble(Model = name, RMSE = rmse_val, Rsq = rsq_value)
+})
+
+# ==============================================================================
+# 0. INITIALIZE THE STORAGE BOARD (Fixes the 'not found' error)
+# ==============================================================================
+# This creates or connects to the local folder where your models live
+champion_board <- board_folder("saved_champion_models", versioned = TRUE)
+
+
+# ==============================================================================
+# 1. IDENTIFY THE WINNING MODEL BLUEPRINT
+# ==============================================================================
+# Ensure the results dataframe is cleanly sorted by lowest RMSE
+results_charges <- results_charges %>% arrange(RMSE)
+results_charges
+
+# Pull the string name of the winner (e.g., "XGBoost")
+best_charges_name <- results_charges$Model[1] 
+
+# Pull the fresh, un-fitted specification straight from your original 'models' list
+best_charges_spec <- models[[best_charges_name]]
+
+
+# ==============================================================================
+# 2. CREATE A CLEAN TIDYMODELS WORKFLOW & FIT IT
+# ==============================================================================
+# Creating an explicit workflow container ensures vetiver gets the exact data
+# types and formula structures it needs to build its internal description.
+champion_workflow <- workflow() %>%
+  add_model(best_charges_spec) %>%
+  add_formula(
+    total_charges ~ discharge_year+age_group + race + ethnicity + length_of_stay + 
+                    apr_severity_of_illness_description + payment_typology_1 + 
+                    type_of_admission + hospital_county + hospital_tier
+  )
+
+# Explicitly train this specific workflow on your training data
+champion_charges_fit <- fit(champion_workflow, data = train_data)
+
+
+# ==============================================================================
+# 3. PASS TO VETIVER & WRITE PIN
+# ==============================================================================
+# Pass the fully trained workflow object directly into the deployment constructor
+v_charges <- vetiver_model(
+  model = champion_charges_fit, 
+  model_name = "delivery_charges_regression"
+)
+
+# Write to your local dashboard board directory
+champion_board %>% vetiver_pin_write(v_charges)
+
+# Also store the champion model as JSON under ml/models
+save_champion_json(
+  model_name = "delivery_charges_regression",
+  fitted_workflow = champion_charges_fit,
+  formula = total_charges ~ discharge_year + age_group + race + ethnicity + length_of_stay +
+                    apr_severity_of_illness_description + payment_typology_1 +
+                    type_of_admission + hospital_county + hospital_tier,
+  results_table = results_charges
+)
+```
+
+### Train, test, and rank the Models for Total Costs
+
+```{r}
+fitted_costs_models <- list()
+
+results_costs = map_dfr(names(models), function(name) {
+  fitted_model = models[[name]] %>%
+    fit(total_costs ~ discharge_year+age_group + race + ethnicity + length_of_stay + apr_severity_of_illness_description +
+        payment_typology_1 + type_of_admission + hospital_county + hospital_tier, data = train_data)
+  
+  fitted_costs_models[[name]] <<- fitted_model
+  
+  preds = predict(fitted_model, new_data = test_data) %>%
+    bind_cols(test_data)
+  
+  # FIX: Evaluated against total_costs instead of total_charges
+  rmse_val = mse(preds, truth = total_costs, estimate = .pred) %>% pull(.estimate)
+  rsq_value = rsq(preds, truth = total_costs, estimate = .pred) %>% pull(.estimate)
+  
+  tibble(Model = name, RMSE = rmse_val, Rsq = rsq_value)
+})
+
+# ==============================================================================
+# EXTRACT AND STORE CHAMPION MODEL FOR TOTAL COSTS
+# ==============================================================================
+
+# 0. Connect to the storage board
+champion_board <- board_folder("saved_champion_models", versioned = TRUE)
+
+# 1. Identify the winning model blueprint from your results dataframe
+results_costs <- results_costs %>% arrange(RMSE)
+results_costs
+best_costs_name <- results_costs$Model[1] 
+best_costs_spec <- models[[best_costs_name]]
+
+# 2. Create a clean workflow container and fit it
+workflow_costs <- workflow() %>%
+  add_model(best_costs_spec) %>%
+  add_formula(
+    total_costs ~ discharge_year+age_group + race + ethnicity + length_of_stay + 
+                  apr_severity_of_illness_description + payment_typology_1 + 
+                  type_of_admission + hospital_county + hospital_tier
+  )
+
+champion_costs_fit <- fit(workflow_costs, data = train_data)
+
+# 3. Create vetiver model and pin it to the board
+v_costs <- vetiver_model(
+  model = champion_costs_fit, 
+  model_name = "delivery_costs_regression"
+)
+
+champion_board %>% vetiver_pin_write(v_costs)
+
+# Also store the champion model as JSON under ml/models
+save_champion_json(
+  model_name = "delivery_costs_regression",
+  fitted_workflow = champion_costs_fit,
+  formula = total_costs ~ discharge_year + age_group + race + ethnicity + length_of_stay +
+                  apr_severity_of_illness_description + payment_typology_1 +
+                  type_of_admission + hospital_county + hospital_tier,
+  results_table = results_costs
+)
+```
+
+
+### Train, test, and rank the Models for Costs to Charge Differential
+
+```{r}
+fitted_diff_models <- list()
+
+results_diff = map_dfr(names(models), function(name) {
+  fitted_model = models[[name]] %>%
+    fit(cost_to_charge_diff ~ discharge_year+age_group + race + ethnicity + length_of_stay + apr_severity_of_illness_description +
+        payment_typology_1 + type_of_admission + hospital_county + hospital_tier, data = train_data)
+  
+  fitted_diff_models[[name]] <<- fitted_model
+  
+  preds = predict(fitted_model, new_data = test_data) %>%
+    bind_cols(test_data)
+  
+  # FIX: Evaluated against cost_to_charge_diff instead of total_charges
+  rmse_val = mse(preds, truth = cost_to_charge_diff, estimate = .pred) %>% pull(.estimate)
+  rsq_value = rsq(preds, truth = cost_to_charge_diff, estimate = .pred) %>% pull(.estimate)
+  
+  tibble(Model = name, RMSE = rmse_val, Rsq = rsq_value)
+})
+
+# ==============================================================================
+# EXTRACT AND STORE CHAMPION MODEL FOR NET DIFFERENCE
+# ==============================================================================
+
+# 0. Connect to the storage board
+champion_board <- board_folder("saved_champion_models", versioned = TRUE)
+
+# 1. Identify the winning model blueprint from your results dataframe
+results_diff <- results_diff %>% arrange(RMSE)
+results_diff
+best_diff_name <- results_diff$Model[1] 
+best_diff_spec <- models[[best_diff_name]]
+
+# 2. Create a clean workflow container and fit it
+workflow_diff <- workflow() %>%
+  add_model(best_diff_spec) %>%
+  add_formula(
+    cost_to_charge_diff ~ discharge_year+age_group + race + ethnicity + length_of_stay + 
+                          apr_severity_of_illness_description + payment_typology_1 + 
+                          type_of_admission + hospital_county + hospital_tier
+  )
+
+champion_diff_fit <- fit(workflow_diff, data = train_data)
+
+# 3. Create vetiver model and pin it to the board
+v_diff <- vetiver_model(
+  model = champion_diff_fit, 
+  model_name = "delivery_margin_diff_regression"
+)
+
+champion_board %>% vetiver_pin_write(v_diff)
+
+# Also store the champion model as JSON under ml/models
+save_champion_json(
+  model_name = "delivery_margin_diff_regression",
+  fitted_workflow = champion_diff_fit,
+  formula = cost_to_charge_diff ~ discharge_year + age_group + race + ethnicity + length_of_stay +
+                          apr_severity_of_illness_description + payment_typology_1 +
+                          type_of_admission + hospital_county + hospital_tier,
+  results_table = results_diff
+)
+```
+
+### Binary Outcome
+
+```{r}
+
+# 1. Logistic Regression (Replaced linear_reg)
+logistic_spec <- logistic_reg() %>%
+  set_engine("glm") %>%
+  set_mode("classification")
+
+# 2. Classification Tree (Changed mode to classification)
+tree_spec <- decision_tree() %>%
+  set_engine("rpart") %>%
+  set_mode("classification")
+
+# 3. Random Forest (Changed mode to classification)
+rf_spec <- rand_forest(trees = 100) %>%
+  set_engine("ranger") %>%
+  set_mode("classification")
+
+# 4. XGBoost (Changed mode to classification)
+xgb_spec <- boost_tree(trees = 100) %>%  
+  set_engine("xgboost") %>%              
+  set_mode("classification")
+
+# ==============================================================================
+# UPDATED CANDIDATE LIST
+# ==============================================================================
+models = list(
+  "Logistic Regression"       = logistic_spec,
+  "Classification Tree"       = tree_spec,
+  "Random Forest"             = rf_spec,
+  "XGBoost"                   = xgb_spec
+)
+```
+
+### Train, Test, and Rank the models for payment ≥ 50%
+
+```{r}
+
+fitted_binary_models <- list()
+
+results_binary = map_dfr(names(models), function(name) {
+  fitted_model = models[[name]] %>%
+    fit(cost_gte_50_pct ~ discharge_year+age_group + race + ethnicity + length_of_stay + 
+        apr_severity_of_illness_description + payment_typology_1 + 
+        type_of_admission + hospital_county + hospital_tier, data = train_data)
+  
+  fitted_binary_models[[name]] <<- fitted_model
+  
+  hard_preds <- predict(fitted_model, new_data = test_data)
+  prob_preds <- predict(fitted_model, new_data = test_data, type = "prob")
+  
+  preds <- test_data %>% bind_cols(hard_preds, prob_preds)
+  
+  accuracy_val <- accuracy(preds, truth = cost_gte_50_pct, estimate = .pred_class) %>% pull(.estimate)
+  
+  auc_val <- suppressWarnings(
+    roc_auc(preds, truth = cost_gte_50_pct, .pred_GTE_50) %>% pull(.estimate)
+  )
+  
+  tibble(Model = name, Accuracy = accuracy_val, ROC_AUC = auc_val)
+})
+
+# ==============================================================================
+# EXTRACT AND STORE CHAMPION MODEL FOR BINARY CLASSIFICATION (≥ 50%)
+# ==============================================================================
+
+# 0. Connect to the storage board
+champion_board <- board_folder("saved_champion_models", versioned = TRUE)
+
+# 1. Identify the winning classification model blueprint from your results dataframe
+results_binary <- results_binary %>% arrange(desc(ROC_AUC))
+results_binary
+best_binary_name <- results_binary$Model[1] 
+best_binary_spec <- models[[best_binary_name]]
+
+# 2. Create a clean classification workflow container and fit it
+workflow_binary <- workflow() %>%
+  add_model(best_binary_spec) %>%
+  add_formula(
+    cost_gte_50_pct ~ discharge_year+age_group + race + ethnicity + length_of_stay + 
+                      apr_severity_of_illness_description + payment_typology_1 + 
+                      type_of_admission + hospital_county + hospital_tier
+  )
+
+champion_binary_fit <- fit(workflow_binary, data = train_data)
+
+# 3. Create vetiver model and pin it to the board
+v_binary <- vetiver_model(
+  model = champion_binary_fit, 
+  model_name = "delivery_recovery_threshold_classification"
+)
+
+champion_board %>% vetiver_pin_write(v_binary)
+
+# Also store the champion model as JSON under ml/models
+save_champion_json(
+  model_name = "delivery_recovery_threshold_classification",
+  fitted_workflow = champion_binary_fit,
+  formula = cost_gte_50_pct ~ discharge_year + age_group + race + ethnicity + length_of_stay +
+                      apr_severity_of_illness_description + payment_typology_1 +
+                      type_of_admission + hospital_county + hospital_tier,
+  results_table = results_binary
+)
+```
+
+
