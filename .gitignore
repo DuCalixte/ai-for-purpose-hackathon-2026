@@ -1,3 +1,7 @@
+.idea/
+.DS_Store
+**/.DS_Store
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
@@ -216,3 +220,21 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# IGNORE Large binaries
+*.rds
+
+ml/data/
+ml/data/*
+ml/src/rsconnect
+ml/src/rsconnect/**/*.dcf
+ml/src/Dashboard/
+ml/src/Dashboard/*
+!/ml/src/Dashboard/.gitkeep
+ml/src/saved_champion_models/
+ml/src/saved_champion_models/*
+!/ml/src/saved_champion_models/.gitkeep
+ml/models/
+ml/models/*
+!/ml/models/.gitkeep
+!ml/models/.gitkeep

@@ -1,0 +1,76 @@
+# ==========================================
+# 1. AI, Machine Learning, and Data Science
+# ==========================================
+# Never bake heavy datasets or model weights directly into the image
+**/data/
+**/datasets/
+**/models/
+**/weights/
+**/snapshots/
+**/*.bin
+**/*.pt
+**/*.pth
+**/*.ckpt
+**/*.onnx
+**/*.gguf
+**/*.safetensors
+**/*.h5
+**/*.pkl
+**/*.pickle
+
+# Jupyter Notebook artifacts
+**/.ipynb_checkpoints/
+
+# ==========================================
+# 2. Python Caches and Environments
+# ==========================================
+# Exclude bytecode and local virtual environments
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+venv/
+env/
+.env/
+.pytest_cache/
+.coverage
+htmlcov/
+*.egg-info/
+.cache/
+.pip-cache/
+
+# ==========================================
+# 3. Environment Variables and Secrets
+# ==========================================
+# Prevent leaking API keys (OpenAI, Anthropic, HuggingFace, etc.)
+.env
+.env.*
+*.pem
+*.key
+secrets.yaml
+config/local_settings.py
+
+# ==========================================
+# 4. Version Control and IDEs
+# ==========================================
+.git
+.gitignore
+.github/
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+
+# ==========================================
+# 5. Docker and Build Artifacts
+# ==========================================
+.dockerignore
+Dockerfile
+docker-compose.yml
+build/
+dist/
+*.log
+
