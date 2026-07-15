@@ -1,0 +1,35 @@
+---
+title: "Maternal Health Case Simulation Report"
+subtitle: "Vaginal Delivery Financial Projections Engine"
+author: "Generated via Analytics Engine"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+library(scales)
+library(ggplot2)
+library(tibble)
+
+# Raw inputs loaded directly via textual replacement
+charge_val <- DATA_CHARGE
+cost_val   <- DATA_COST
+prob_val   <- DATA_PROB
+
+plot_df <- data.frame(
+  Metric = c("Billed Charges", "Operational Costs", "Net Remainder"),
+  Amount = c(charge_val, cost_val, (charge_val - cost_val)),
+  stringsAsFactors = FALSE
+)
+
+ggplot(plot_df, aes(x = Metric, y = Amount, fill = Metric)) +
+  geom_col(width = 0.4, show.legend = FALSE) +
+  scale_y_continuous(labels = label_dollar()) +
+  scale_fill_manual(values = c("Billed Charges" = "#56B4E9", 
+                               "Operational Costs" = "#E69F00", 
+                               "Net Remainder" = "#CC79A7")) +
+  labs(title = "Simulated Balance Summary Pipeline", x = NULL, y = "Projected Balance ($)") +
+  theme_minimal(base_size = 12)
+```
+
