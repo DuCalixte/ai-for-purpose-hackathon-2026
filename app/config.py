@@ -7,3 +7,5 @@ class Settings(BaseSettings):
     ENVIRONMENT: str = "development"
     API_V1_STR: str = "/api/v1"
     APP_STATUS: str = "/api/app_status"
+    X_API_AUTH_TITLE: str = "X-API-AUTH"
+    X_PRIVATE_API_KEY: str = "KEY IS TOO EASY"

@@ -32,6 +32,7 @@ library(yardstick)
 library(vetiver)
 library(pins)
 library(jsonlite)
+library(xgboost)
 ```
 
 ### Loading the data
@@ -508,10 +509,19 @@ json_models_dir <- "../models"
 if (!dir.exists(json_models_dir)) dir.create(json_models_dir, recursive = TRUE)
 
 save_champion_json <- function(model_name, fitted_workflow, formula, results_table) {
-  write(
-    jsonlite::serializeJSON(fitted_workflow),
-    file.path(json_models_dir, paste0(model_name, ".json"))
-  )
+  # 1. Extract the actual fitted xgboost model from the tidymodels workflow
+  xgb_model <- extract_fit_parsnip(fitted_workflow)$fit
+  
+  # 2. Save the XGBoost model natively as a JSON file
+  # Note: The extension MUST be .json
+  model_path <- file.path(json_models_dir, paste0(model_name, ".json"))
+  # xgb.save(xgb_model, model_path, fname_format = "json")
+  xgb.save(xgb_model, model_path)
+  
+  # write(
+  #  jsonlite::serializeJSON(fitted_workflow),
+  #  file.path(json_models_dir, paste0(model_name, ".json"))
+  #)
 
   metadata <- list(
     model_name = model_name,
