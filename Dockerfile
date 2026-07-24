@@ -1,5 +1,5 @@
 #  --- Build Stage ---
-FROM python:3.12-slim AS builder
+FROM python:3.11-slim AS builder
 
 ENV APP_HOME=/home/app
 
@@ -55,7 +55,7 @@ COPY ./app ${APP_HOME}/app
 
 RUN which pyenv
 
-RUN pyenv virtualenv 3.12.13 $VIRTUALENV
+RUN pyenv virtualenv 3.11.15 $VIRTUALENV
 
 RUN pip install --no-cache-dir -r requirements.txt
 
