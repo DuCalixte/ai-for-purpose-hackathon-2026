@@ -4,11 +4,13 @@ from app.config import Settings
 settings = Settings()
 current_time = time.time()
 
-ACTIVE_KEYS = {} # Memory-based storage for the monolith
+ACTIVE_KEYS = {}  # Memory-based storage for the monolith
+
 
 def validate_key(key):
     # Replace with your actual secure key validation logic
-    if key != settings.X_PRIVATE_API_KEY: return False
+    if key != settings.X_PRIVATE_API_KEY:
+        return False
     current_time = time.time()
     if key not in ACTIVE_KEYS:
         ACTIVE_KEYS[key] = current_time

@@ -1,5 +1,6 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+
 class Settings(BaseSettings):
     # Uploading system data
     APP_OID: str = "nyc_hospital_sparcs_agent"
