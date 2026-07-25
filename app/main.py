@@ -1,3 +1,4 @@
+from app.agent_utils import process_response
 from fastapi import FastAPI, Depends, Header, HTTPException
 from fastapi.responses import HTMLResponse
 from app.agent import Agent
@@ -72,21 +73,25 @@ async def chat(request: ChatRequest):
         r"^```json\s*|```$", "", body.response.content.strip(), flags=re.IGNORECASE
     )
     print(content)
-    json_content = json.loads(content)
+    json_content = process_response(content)  # json.loads(content)
     print(json_content)
     table_response = None
-    if json_content["table"] is not None:
+    if json_content["table"] is not None or json_content["table"] != "":
         try:
-            table_response = pd.DataFrame(json_content["table"]).to_dict(
-                orient="records"
-            )
+            table_data = json_content["table"]
+            if len(table_data) == 0:
+                table_response = None
+            elif len(table_data) == 1:
+                table_response = pd.DataFrame(table_data)
+            else:
+                table_response = pd.DataFrame(table_data).to_dict(orient="records")
         except Exception as e:
             print(f"Unable to display table with the following error: {str(e)}")
             table_response = None
 
     # print(json_content["graph"])
     graph_response = None
-    if json_content["graph"] is not None:
+    if json_content["graph"] is not None or json_content["graph"] != "":
         try:
             # Parse layout configurations out of the dictionary
             chart_dict = json_content["graph"]
@@ -156,7 +161,7 @@ async def chat(request: ChatRequest):
             graph_response = None
 
     final_response = {
-        "response": json_content["summary"],
+        "response": json_content["summary"] or json_content["conversation"],
         "table": table_response,
         "graph": graph_response,
         "status": "success",

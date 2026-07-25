@@ -43,7 +43,7 @@ import re
 async def main():
     session_id = str(uuid.uuid4())
 
-    core_query = """Show charges only for a person with race=white, length_of_stay=4, discharge_year=2023, age_group=30-49, apr_severity_of_illness_description=Minor and payment_typology_1="Blue Cross/Blue Shield."""
+    core_query_1 = """Show charges only for a pregnant woman with race=white, length_of_stay=4, discharge_year=2023, age_group=30-49, apr_severity_of_illness_description=Minor and payment_typology_1=Blue Cross/Blue Shield. You are able to follow the agent system prompt and seek tools and provide expected parameters. Share the parameters and tools that were used for your result(s)."""
 
     core_query_2 = """Show charges, costs and cost differential projection for an expecting with race=Black/African American or Other Race, length_of_stay=4, discharge_year between 2021 to 2023, age_group=30-49, apr_severity_of_illness_description=Minor, payment_typology_1=Blue Cross/Blue Shield and hospital_county=Kings. Do not produce incomplete output, all values must have matching pair of brackets [] and curly brackets."""
     core_agent = Agent(session_id=session_id)
@@ -60,7 +60,7 @@ async def main():
     )
 
     print("Performing a search for charges")
-    response = await core_agent.chat(core_query_2)
+    response = await core_agent.chat(core_query_1)
     print(response)
     print("....................")
     # # content
@@ -80,31 +80,29 @@ async def main():
     print("....................")
     try:
         data = json.loads(clean_json_string)
+        print(data)
+        print("....................")
+        print(data["summary"])
+        print("....................")
     except Exception as e:
         print(
             f"content failes to render with error: {str(e)}. See \n{clean_json_string}"
         )
         print("....................")
-        pattern = r'(?<=",[\s\n\r]\s*"table":\s*\[).*'
-        # .*(?=.*\s*,[\n\r\s]*\s*['"]{1}table['"]\:)
-        result = re.sub(pattern, "}", clean_json_string, flags=re.DOTALL)
-        print(result)
-        print("....................")
-        data = json.loads(clean_json_string)
+        # pattern = r'(?<=",[\s\n\r]\s*"table":\s*\[).*'
+        # # .*(?=.*\s*,[\n\r\s]*\s*['"]{1}table['"]\:)
+        # result = re.sub(pattern, "}", clean_json_string, flags=re.DOTALL)
+        # print(result)
+        # print("....................")
+        # data = json.loads(clean_json_string)
 
-    print(data)
-    print("....................")
-    print(data["summary"])
-    print("....................")
+    # print(data)
+    # print("....................")
+    # print(data["summary"])
+    # print("....................")
 
     # response_charges = await delivery_charges_regression_agent.chat(query_charges)
     # print(response_charges)
-
-    model_prediction_tool = ModelPredictionTool(
-        model_name="Testing Model name",
-        json_model_filepath="ml/models/delivery_charges_regression.json",
-        llm=llm_to_use,
-    )
 
     basic_prompts = {
         "discharge_year": 2023,
@@ -126,8 +124,53 @@ async def main():
     #     "hospital_county": "Kings",
     #     "hospital_tier": "Private System"
     # }
-    # response_from_prompts = model_prediction_tool.predict_from_model(basic_prompts)
-    # print(response_from_prompts)
+    print("computing charges")
+    model_charges_prediction_tool = ModelPredictionTool(
+        model_name="Testing Charges",
+        json_model_filepath="ml/models/delivery_charges_regression.json",
+        llm=llm_to_use,
+    )
+    response_charges_from_prompts = model_charges_prediction_tool.predict_from_model(
+        basic_prompts
+    )
+    print(f"Charges: {response_charges_from_prompts}")
+    print("~~~~~~~~~~~~~~~~~~~~~~~~~")
+
+    print("computing costs")
+    model_costs_prediction_tool = ModelPredictionTool(
+        model_name="Testing Costs",
+        json_model_filepath="ml/models/delivery_costs_regression.json",
+        llm=llm_to_use,
+    )
+    response_costs_from_prompts = model_costs_prediction_tool.predict_from_model(
+        basic_prompts
+    )
+    print(f"Costs: {response_costs_from_prompts}")
+    print("~~~~~~~~~~~~~~~~~~~~~~~~~")
+
+    print("computing cost differential projections")
+    model_margin_diff_prediction_tool = ModelPredictionTool(
+        model_name="Testing Model name",
+        json_model_filepath="ml/models/delivery_margin_diff_regression.json",
+        llm=llm_to_use,
+    )
+    response_margin_diff_from_prompts = (
+        model_margin_diff_prediction_tool.predict_from_model(basic_prompts)
+    )
+    print(f"Cost differential projections: {response_margin_diff_from_prompts}")
+    print("~~~~~~~~~~~~~~~~~~~~~~~~~")
+
+    print("computing recovery threshold classification")
+    model_rtc_prediction_tool = ModelPredictionTool(
+        model_name="Testing Model name",
+        json_model_filepath="ml/models/delivery_recovery_threshold_classification.json",
+        llm=llm_to_use,
+    )
+    response_rtc_from_prompts = model_rtc_prediction_tool.predict_from_model(
+        basic_prompts
+    )
+    print(f"Recovery threshold classification: {response_rtc_from_prompts}")
+    print("~~~~~~~~~~~~~~~~~~~~~~~~~")
 
 
 # Call the main async function

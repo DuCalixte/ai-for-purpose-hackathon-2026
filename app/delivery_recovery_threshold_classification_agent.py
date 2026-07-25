@@ -27,6 +27,19 @@ STRICT INPUT VALIDATION & TRANSFORMATION RULES:
    - If the combined string matches a valid model column, consider it validated.
    - If a provided value cannot be mapped to any of the valid model feature columns, REJECT the request completely.
 4. Active Only: Only keep track of the specific active properties. Do not produce keys set to 0.
+5. if the request was for discharge_year = 2022, race = Other race or Black/African American, ethnicity = Not Span/Hispanic, length_of_stay = 5, apr_severity_of_illness_description = Minor, type_of_admission = Elective, payment_typology_1 = Blue Cross/Blue Shield, hospital_county = Kings and hospital_tier = Private System. The input parameters should be as shown below:
+{
+	"discharge_year": 2022,
+	"raceOther Race": 1,
+	"raceBlack/African American": 1,
+	"ethnicityNot Span/Hispanic": 1,
+	"length_of_stay": 5,
+	"apr_severity_of_illness_descriptionMinor": 1,
+	"type_of_admissionElective": 1,
+	"payment_typology_1Blue Cross/Blue Shield": 1,
+	"hospital_countyKings": 1,
+	"hospital_tierPrivate System": 1
+}
 
 STATEFUL MEMORY & SIDE-BY-SIDE COMPARISONS:
 - Maintain a running state of the active investigator profile across messages. Merge updates incrementally.
