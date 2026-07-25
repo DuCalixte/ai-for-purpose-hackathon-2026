@@ -39,6 +39,7 @@ class ModelPredictionTool:
     def predict_from_model(self, input_dict: dict) -> Optional[float]:
         """Accepts grouped parameters, maps to integer array, and executes named DMatrix."""
         try:
+            print(input_dict)
             encoded_features = {col: 0 for col in self.model_columns}
 
             for item in self.model_columns:

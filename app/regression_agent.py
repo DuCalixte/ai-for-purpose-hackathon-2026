@@ -39,7 +39,7 @@ class RegressionAgent:
             tools=[json_structural_tool, model_prediction_tool],
             llm=llm,
             system_prompt=self.system_prompt,
-            verbose=True,
+            verbose=False,
         )
 
     nest_asyncio.apply()
