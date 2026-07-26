@@ -65,7 +65,7 @@ def acquire_model() -> Optional[Anthropic | Ollama | HuggingFaceLLM | BedrockCon
             return BedrockConverse(
                 model=BEDROCK_LLM_MODEL,
                 max_tokens=BEDROCK_MAX_TOKENS,
-                region=AWS_REGION,
+                region_name=AWS_REGION,
             )
         case _:
             return None
