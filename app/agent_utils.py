@@ -7,8 +7,17 @@ import traceback
 
 def process_response(content: str):
     try:
-        return json.loads(content)
+        # Locate where the actual JSON object starts
+        start_index = content.find("{")
+
+        if start_index != -1:
+            clean_content = content[start_index:]
+            return json.loads(clean_content)
+        else:
+            return json.loads(content.strip())
     except Exception as e:
+        traceback.print_exc()
+        print(repr(content[:20]))
         print(f"Unable to process JSON content error: {str(e)}")
         return {"conversation": content, "summary": None, "table": "", "graph": ""}
 
